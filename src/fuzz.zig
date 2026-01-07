@@ -12,8 +12,10 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     var allocator = gpa.allocator();
 
-    const stdin = std.io.getStdIn();
-    const data = try stdin.readToEndAlloc(allocator, std.math.maxInt(usize));
+    var stdin_buffer: [1024]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    const stdin = &stdin_reader.interface;
+    const data = try stdin.readAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(data);
 
     const lexer = parser.Lexer{ .real = try lex.Lexer.init(allocator, data) };

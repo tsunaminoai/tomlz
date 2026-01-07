@@ -145,30 +145,25 @@ fn expectParseEqualToJson(src: []const u8, json: []const u8) !void {
     var table = try parser.parse(testing.allocator, src);
     defer table.deinit(testing.allocator);
 
-    var actual_al = std.ArrayList(u8).init(testing.allocator);
-    defer actual_al.deinit();
-
-    var json_writer = std.json.writeStreamArbitraryDepth(
-        testing.allocator,
-        actual_al.writer(),
-        .{ .whitespace = .indent_4 },
-    );
-    defer json_writer.deinit();
-
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
+    defer arena.deinit(); // no allocator arg in 0.15.2
 
-    var actual_json = try tableToJson(arena.allocator(), &table);
-    try actual_json.jsonStringify(&json_writer);
+    const actual_json = try tableToJson(arena.allocator(), &table);
 
-    try testing.expectEqualStrings(json, actual_al.items);
+    const actual = try std.json.Stringify.valueAlloc(
+        arena.allocator(),
+        actual_json,
+        .{ .whitespace = .indent_4 },
+    ); // uses stringifyArbitraryDepth under the hood[web:10]
+
+    try testing.expectEqualStrings(json, actual);
 }
 
 fn testFile(dir: *const std.fs.Dir, basename: []const u8) !parser.Table {
     var f = try dir.openFile(basename, .{});
     defer f.close();
 
-    const contents = try f.reader().readAllAlloc(testing.allocator, 5 * 1024 * 1024);
+    const contents = try f.readToEndAlloc(testing.allocator, 5 * 1024 * 1024);
     defer testing.allocator.free(contents);
 
     return try parser.parse(testing.allocator, contents);
@@ -199,7 +194,7 @@ fn testValid(dir: *const std.fs.Dir, path: []const u8, basename: []const u8) !bo
     };
     defer tbl.deinit(testing.allocator);
 
-    var value = .{ .table = tbl };
+    var value: parser.Value = .{ .table = tbl };
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var actual = try tomlValueToJson(arena.allocator(), &value);
@@ -211,7 +206,7 @@ fn testValid(dir: *const std.fs.Dir, path: []const u8, basename: []const u8) !bo
     var f = try dir.openFile(json_path, .{});
     defer f.close();
 
-    const contents = try f.reader().readAllAlloc(testing.allocator, 5 * 1024 * 1024);
+    const contents = try f.readToEndAlloc(testing.allocator, 5 * 1024 * 1024);
     defer testing.allocator.free(contents);
 
     var expected = try std.json.parseFromSlice(std.json.Value, testing.allocator, contents, .{});
@@ -228,7 +223,7 @@ fn testValid(dir: *const std.fs.Dir, path: []const u8, basename: []const u8) !bo
 // standard tests
 
 test "invalid" {
-    var dir = try std.fs.cwd().makeOpenPath("tests/invalid", .{.iterate = true});
+    var dir = try std.fs.cwd().makeOpenPath("tests/invalid", .{ .iterate = true });
     defer dir.close();
 
     var fail = false;
@@ -245,7 +240,7 @@ test "invalid" {
 }
 
 test "valid" {
-    var dir = try std.fs.cwd().makeOpenPath("tests/valid", .{.iterate = true});
+    var dir = try std.fs.cwd().makeOpenPath("tests/valid", .{ .iterate = true });
     defer dir.close();
 
     var fail = false;
@@ -265,7 +260,7 @@ test "valid" {
 // fuzz error case tests
 
 test "fuzz" {
-    var dir = try std.fs.cwd().makeOpenPath("tests/fuzzing", .{.iterate = true});
+    var dir = try std.fs.cwd().makeOpenPath("tests/fuzzing", .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(testing.allocator);
@@ -279,7 +274,7 @@ test "fuzz" {
         var f = try entry.dir.openFile(full_path, .{});
         defer f.close();
 
-        const contents = try f.reader().readAllAlloc(testing.allocator, 5 * 1024 * 1024);
+        const contents = try f.readToEndAlloc(testing.allocator, 5 * 1024 * 1024);
         defer testing.allocator.free(contents);
 
         // We just want to make sure we don't crash when parsing these
